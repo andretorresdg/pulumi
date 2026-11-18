@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	cloudapitype "github.com/pulumi/pulumi-cloud-sdk/go/apitype"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 )
 
@@ -74,9 +75,10 @@ type DiagnosticEvent struct {
 	Message string `json:"message"`
 	Color   string `json:"color"`
 	// Severity is one of "info", "info#err", "warning", or "error".
-	Severity  string `json:"severity"`
-	StreamID  int    `json:"streamID,omitempty"`
-	Ephemeral bool   `json:"ephemeral,omitempty"`
+	Severity      string              `json:"severity"`
+	StreamID      int                 `json:"streamID,omitempty"`
+	Ephemeral     bool                `json:"ephemeral,omitempty"`
+	SourceContext *diag.SourceContext `json:"sourceContext,omitempty"`
 }
 
 // StartDebuggingEvent is emitted to start a debugging session.

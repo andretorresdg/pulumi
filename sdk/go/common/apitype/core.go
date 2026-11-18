@@ -564,10 +564,31 @@ type ResourceV3 struct {
 	SnippetID string `json:"snippetID,omitempty" yaml:"snippetID,omitempty"`
 }
 
-// StackFrameV1 captures information about a stack frame.
+// StackFrameV1 represents one captured stack frame.
 type StackFrameV1 struct {
 	// SourcePosition contains the source position associated with the stack frame.
 	SourcePosition string `json:"sourcePosition,omitempty" yaml:"sourcePosition,omitempty"`
+	// Module identifies a language-level namespace, such as a Python or Go module
+	// or a Node.js package, not a module in a Pulumi resource token.
+	Module string `json:"module,omitempty" yaml:"module,omitempty"`
+	// Origin identifies known infrastructure code: "pulumi" for the core SDK or
+	// launcher, "runtime" for the language runtime, or empty when unclassified.
+	Origin string `json:"origin,omitempty" yaml:"origin,omitempty"`
+	// Boundary marks the start of a separately captured stack within the combined
+	// trace. It describes the entire capture, not just this frame.
+	Boundary *StackTraceBoundaryV1 `json:"boundary,omitempty" yaml:"boundary,omitempty"`
+}
+
+// StackTraceBoundaryV1 identifies the operation whose execution produced a captured stack section.
+type StackTraceBoundaryV1 struct {
+	// RegistrationPosition identifies the resource-instantiation call site within this capture.
+	RegistrationPosition string `json:"registrationPosition,omitempty" yaml:"registrationPosition,omitempty"`
+	// Kind identifies the execution context of the capture: "program", "construct", or "call".
+	Kind string `json:"kind" yaml:"kind"`
+	// ResourceType identifies the component whose Construct was executing, not the child registered at RegistrationPosition.
+	ResourceType string `json:"resourceType,omitempty" yaml:"resourceType,omitempty"`
+	// ResourceName is the name of that component. ResourceType and ResourceName are omitted for other capture kinds.
+	ResourceName string `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
 }
 
 // ManifestV1 captures meta-information about this checkpoint file, such as versions of binaries, etc.

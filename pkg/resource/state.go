@@ -395,4 +395,11 @@ func (s *State) GetAllDependencies() (string, []StateDependency) {
 type StackFrame struct {
 	// The source position associated with the stack frame.
 	SourcePosition string
+	// Module identifies a language-level namespace, such as a Python or Go module or a Node.js package,
+	// not a module in a Pulumi resource token.
+	Module string
+	// Origin identifies known core SDK/launcher or language runtime code.
+	Origin string
+	// Boundary starts a separately captured stack section.
+	Boundary *apitype.StackTraceBoundaryV1
 }

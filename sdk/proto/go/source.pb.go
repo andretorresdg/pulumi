@@ -35,7 +35,10 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// A SourcePosition represents a position in a source file.
+// A SourcePosition represents a position in a source file. Its meaning depends on the containing field:
+// a resource registration's sourcePosition identifies the resource's instantiation, while a stack frame's
+// pc identifies where that frame was executing. If a component provider instantiates a child resource,
+// the registration position points into the provider's code, not the application's remote component call site.
 type SourcePosition struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Uri           string                 `protobuf:"bytes,1,opt,name=uri,proto3" json:"uri,omitempty"`        // The URI of the file. Currently only the file scheme with an absolute path is supported.
@@ -98,8 +101,14 @@ func (x *SourcePosition) GetColumn() int32 {
 
 // A StackFrame represents a single stack frame.
 type StackFrame struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Pc            *SourcePosition        `protobuf:"bytes,1,opt,name=pc,proto3" json:"pc,omitempty"` // The position of the frame's program counter. Optional.
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Where this frame was executing when captured. This can be SDK or runtime code, and need not be
+	// the resource's instantiation location. Optional.
+	Pc *SourcePosition `protobuf:"bytes,1,opt,name=pc,proto3" json:"pc,omitempty"`
+	// The language-level namespace, such as a Python or Go module or a Node.js package, not a Pulumi token module.
+	Module string `protobuf:"bytes,2,opt,name=module,proto3" json:"module,omitempty"`
+	// Known code origin: "pulumi" for the core SDK/launcher or "runtime" for the language runtime. Empty means unclassified.
+	Origin        string `protobuf:"bytes,3,opt,name=origin,proto3" json:"origin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -141,7 +150,23 @@ func (x *StackFrame) GetPc() *SourcePosition {
 	return nil
 }
 
-// A StackTrace represents the frames on the stack at the point of an RPC call.
+func (x *StackFrame) GetModule() string {
+	if x != nil {
+		return x.Module
+	}
+	return ""
+}
+
+func (x *StackFrame) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+// A StackTrace represents one capture within an SDK process, ordered from the innermost frame to its callers.
+// The engine can join captures across provider calls using parent stack trace handles. The resulting state
+// and diagnostic traces include capture boundaries added by the engine; those boundaries are not sent here.
 type StackTrace struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Frames        []*StackFrame          `protobuf:"bytes,1,rep,name=frames,proto3" json:"frames,omitempty"` // The frames on the stack.
@@ -194,10 +219,12 @@ const file_pulumi_source_proto_rawDesc = "" +
 	"\x0eSourcePosition\x12\x10\n" +
 	"\x03uri\x18\x01 \x01(\tR\x03uri\x12\x12\n" +
 	"\x04line\x18\x02 \x01(\x05R\x04line\x12\x16\n" +
-	"\x06column\x18\x03 \x01(\x05R\x06column\"7\n" +
+	"\x06column\x18\x03 \x01(\x05R\x06column\"g\n" +
 	"\n" +
 	"StackFrame\x12)\n" +
-	"\x02pc\x18\x01 \x01(\v2\x19.pulumirpc.SourcePositionR\x02pc\";\n" +
+	"\x02pc\x18\x01 \x01(\v2\x19.pulumirpc.SourcePositionR\x02pc\x12\x16\n" +
+	"\x06module\x18\x02 \x01(\tR\x06module\x12\x16\n" +
+	"\x06origin\x18\x03 \x01(\tR\x06origin\";\n" +
 	"\n" +
 	"StackTrace\x12-\n" +
 	"\x06frames\x18\x01 \x03(\v2\x15.pulumirpc.StackFrameR\x06framesB4Z2github.com/pulumi/pulumi/sdk/v3/proto/go;pulumirpcb\x06proto3"

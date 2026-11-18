@@ -1327,7 +1327,7 @@ func (rm *resmon) Call(ctx context.Context, req *pulumirpc.ResourceCallRequest) 
 		argDependencies[resource.PropertyKey(name)] = urns
 	}
 
-	stackTraceHandle := rm.sourcePositions.recordParentRequest(req)
+	stackTraceHandle := rm.sourcePositions.recordParentRequest(req, &apitype.StackTraceBoundaryV1{Kind: "call"})
 	defer stackTraceHandle.Release()
 
 	// If we have output values we can add the dependencies from them to the args dependencies map we send to the provider.
@@ -2152,7 +2152,7 @@ type stackTrace = []pkgresource.StackFrame
 type sourcePositions struct {
 	projectRoot string
 
-	stackTraces gsync.Map[string, stackTrace]
+	stackTraces gsync.Map[string, parentStackTrace]
 }
 
 func newSourcePositions(projectRoot string) *sourcePositions {
@@ -2215,9 +2215,9 @@ func (s *sourcePositions) newStackTrace(raw *pulumirpc.StackTrace) stackTrace {
 		pc, err := s.parseSourcePosition(f.GetPc())
 		if err != nil {
 			logging.V(5).Infof("failed to parse frame source position %#v: %v", f.GetPc(), err)
-			return pkgresource.StackFrame{}
+			pc = ""
 		}
-		return pkgresource.StackFrame{SourcePosition: pc}
+		return pkgresource.StackFrame{SourcePosition: pc, Module: f.GetModule(), Origin: f.GetOrigin()}
 	})
 }
 
@@ -2243,16 +2243,23 @@ func (s stackHandle) Release() {
 	}
 }
 
+type parentStackTrace struct {
+	frames   stackTrace
+	boundary *apitype.StackTraceBoundaryV1
+}
+
 // recordParentRequest fetches position information from an incoming request. If the request contains a stack trace,
 // the stack trace is associated with a handle to be passed along to other requests.
-func (s *sourcePositions) recordParentRequest(req hasSourcePosition) stackHandle {
+func (s *sourcePositions) recordParentRequest(
+	req hasSourcePosition, boundary *apitype.StackTraceBoundaryV1,
+) stackHandle {
 	_, stack := s.getFromRequest(req)
 	if stack == nil {
 		return stackHandle{}
 	}
 
 	value := uuid.New().String()
-	if _, exists := s.stackTraces.LoadOrStore(value, stack); exists {
+	if _, exists := s.stackTraces.LoadOrStore(value, parentStackTrace{frames: stack, boundary: boundary}); exists {
 		logging.V(5).Infof("stack cookie collision for key %v", value)
 		return stackHandle{}
 	}
@@ -2271,12 +2278,21 @@ func (s *sourcePositions) getFromRequest(req hasSourcePosition) (string, stackTr
 	if req, ok := req.(hasParentStackTraceHandle); ok {
 		if handle := req.GetParentStackTraceHandle(); handle != "" {
 			if parent, ok := s.stackTraces.Load(handle); ok {
-				newStack := make(stackTrace, 0, len(parent)+len(stack))
+				if len(stack) == 0 {
+					stack = stackTrace{{}}
+				}
+				boundary := *parent.boundary
+				boundary.RegistrationPosition = pos
+				stack[0].Boundary = &boundary
+				newStack := make(stackTrace, 0, len(parent.frames)+len(stack))
 				newStack = append(newStack, stack...)
-				newStack = append(newStack, parent...)
+				newStack = append(newStack, parent.frames...)
 				stack = newStack
 			}
 		}
+	}
+	if len(stack) > 0 && stack[0].Boundary == nil {
+		stack[0].Boundary = &apitype.StackTraceBoundaryV1{Kind: "program", RegistrationPosition: pos}
 	}
 	return pos, stack
 }
@@ -3027,7 +3043,9 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 		}
 		options.DeleteBeforeReplace = opts.DeleteBeforeReplace
 
-		stackTraceHandle := rm.sourcePositions.recordParentRequest(req)
+		stackTraceHandle := rm.sourcePositions.recordParentRequest(req, &apitype.StackTraceBoundaryV1{
+			Kind: "construct", ResourceType: string(t), ResourceName: name,
+		})
 		defer stackTraceHandle.Release()
 
 		info := rm.constructInfo
@@ -3057,7 +3075,12 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 					rpcError = err
 				}
 				message := errorToMessage(rpcError, props, rm.opts.ShowSecrets)
-				rm.diagnostics.Errorf(diag.GetResourceInvalidError(constructResult.URN), t, name, message)
+				diagnostic := diag.GetResourceInvalidError(constructResult.URN)
+				if rm.sourcePositions != nil {
+					sourcePosition, stackTrace := rm.sourcePositions.getFromRequest(req)
+					diagnostic.SourceContext = newSourceContext(rm.sourcePositions.projectRoot, sourcePosition, stackTrace)
+				}
+				rm.diagnostics.Errorf(diagnostic, t, name, message)
 
 				rm.abortChan <- true
 				constructDone <- monitorShutdownError(ctx, codes.Unknown, "resource monitor shut down")

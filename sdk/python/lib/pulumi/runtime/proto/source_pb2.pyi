@@ -27,7 +27,11 @@ DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
 @typing.final
 class SourcePosition(google.protobuf.message.Message):
-    """A SourcePosition represents a position in a source file."""
+    """A SourcePosition represents a position in a source file. Its meaning depends on the containing field:
+    a resource registration's sourcePosition identifies the resource's instantiation, while a stack frame's
+    pc identifies where that frame was executing. If a component provider instantiates a child resource,
+    the registration position points into the provider's code, not the application's remote component call site.
+    """
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
@@ -58,23 +62,36 @@ class StackFrame(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     PC_FIELD_NUMBER: builtins.int
+    MODULE_FIELD_NUMBER: builtins.int
+    ORIGIN_FIELD_NUMBER: builtins.int
+    module: builtins.str
+    """The language-level namespace, such as a Python or Go module or a Node.js package, not a Pulumi token module."""
+    origin: builtins.str
+    """Known code origin: "pulumi" for the core SDK/launcher or "runtime" for the language runtime. Empty means unclassified."""
     @property
     def pc(self) -> global___SourcePosition:
-        """The position of the frame's program counter. Optional."""
+        """Where this frame was executing when captured. This can be SDK or runtime code, and need not be
+        the resource's instantiation location. Optional.
+        """
 
     def __init__(
         self,
         *,
         pc: global___SourcePosition | None = ...,
+        module: builtins.str = ...,
+        origin: builtins.str = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["pc", b"pc"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["pc", b"pc"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["module", b"module", "origin", b"origin", "pc", b"pc"]) -> None: ...
 
 global___StackFrame = StackFrame
 
 @typing.final
 class StackTrace(google.protobuf.message.Message):
-    """A StackTrace represents the frames on the stack at the point of an RPC call."""
+    """A StackTrace represents one capture within an SDK process, ordered from the innermost frame to its callers.
+    The engine can join captures across provider calls using parent stack trace handles. The resulting state
+    and diagnostic traces include capture boundaries added by the engine; those boundaries are not sent here.
+    """
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 

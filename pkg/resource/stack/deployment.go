@@ -726,7 +726,10 @@ func SerializeResource(
 	}
 
 	stackTrace := slices.Collect(fxs.Map(res.StackTrace, func(frame pkgresource.StackFrame) apitype.StackFrameV1 {
-		return apitype.StackFrameV1{SourcePosition: frame.SourcePosition}
+		return apitype.StackFrameV1{
+			SourcePosition: frame.SourcePosition,
+			Module:         frame.Module, Origin: frame.Origin, Boundary: frame.Boundary,
+		}
 	}))
 
 	v3Resource := apitype.ResourceV3{
@@ -968,7 +971,10 @@ func DeserializeResource(res apitype.ResourceV3, dec config.Decrypter) (*pkgreso
 	}
 
 	stackTrace := slices.Collect(fxs.Map(res.StackTrace, func(frame apitype.StackFrameV1) pkgresource.StackFrame {
-		return pkgresource.StackFrame{SourcePosition: frame.SourcePosition}
+		return pkgresource.StackFrame{
+			SourcePosition: frame.SourcePosition,
+			Module:         frame.Module, Origin: frame.Origin, Boundary: frame.Boundary,
+		}
 	}))
 
 	return pkgresource.NewState{

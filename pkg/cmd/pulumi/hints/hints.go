@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pulumi/pulumi/pkg/v3/backend"
 	"github.com/pulumi/pulumi/pkg/v3/backend/diy"
 	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
@@ -57,6 +58,15 @@ type Hint struct {
 	// CloudOnly is true for hints about Pulumi Cloud features, which are shown only to users of a Pulumi Cloud
 	// backend.
 	CloudOnly bool
+	// EstablishedStackOnly is true for hints that are shown only when the stack the hint was offered for has at
+	// least minStackResources resources besides the stack itself and providers, so that new users aren't shown them.
+	EstablishedStackOnly bool
+}
+
+// offered is a hint offered during this process, with the stack it was offered for, if any.
+type offered struct {
+	hint  Hint
+	stack backend.Stack
 }
 
 // state is the content of the hints state file.
@@ -68,13 +78,15 @@ type state struct {
 // manager holds the hints offered during this CLI process.
 type manager struct {
 	mu         sync.Mutex
-	pending    []Hint
+	pending    []offered
 	suppressed bool
 
 	now       func() time.Time
 	statePath func() (string, error)
 	settings  func() settings
 	isCloud   func() bool
+	// stackResources counts the resources of s that count towards Hint.EstablishedStackOnly.
+	stackResources func(s backend.Stack) (int, error)
 }
 
 func newManager() *manager {
@@ -83,6 +95,8 @@ func newManager() *manager {
 		statePath: func() (string, error) { return workspace.GetPulumiPath(stateFileName) },
 		settings:  loadSettings,
 		isCloud:   isCloudBackend,
+
+		stackResources: countStackResources,
 	}
 }
 
@@ -134,7 +148,13 @@ func loadSettings() settings {
 func (m *manager) offer(h Hint) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.pending = append(m.pending, h)
+	m.pending = append(m.pending, offered{hint: h})
+}
+
+func (m *manager) offerFor(h Hint, s backend.Stack) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pending = append(m.pending, offered{hint: h, stack: s})
 }
 
 func (m *manager) suppress() {
@@ -163,11 +183,15 @@ func (m *manager) flush(w io.Writer) {
 	}
 	now := m.now()
 	isCloud := sync.OnceValue(m.isCloud)
-	for _, h := range pending {
+	for _, o := range pending {
+		h := o.hint
 		if settings.skip[h.ID] {
 			continue
 		}
 		if h.CloudOnly && !isCloud() {
+			continue
+		}
+		if h.EstablishedStackOnly && !m.isEstablished(o.stack) {
 			continue
 		}
 		if last, ok := st.LastShown[h.ID]; ok && now.Sub(last) < h.Cooldown {

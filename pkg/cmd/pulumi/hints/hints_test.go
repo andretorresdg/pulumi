@@ -39,6 +39,7 @@ type testManager struct {
 	now      time.Time
 	disabled bool
 	skip     []string
+	local    bool
 	path     string
 }
 
@@ -57,6 +58,7 @@ func newTestManager(t *testing.T) *testManager {
 			}
 			return s
 		},
+		isCloud: func() bool { return !tm.local },
 	}
 	return tm
 }
@@ -133,6 +135,20 @@ func TestFlushResetsSuppress(t *testing.T) {
 
 	// The next command in the same process isn't suppressed.
 	assert.Contains(t, tm.run(hintA), "hint a")
+}
+
+func TestCloudOnlyHint(t *testing.T) {
+	t.Parallel()
+	tm := newTestManager(t)
+	cloudHint := Hint{ID: "cloud", Cooldown: time.Hour, Message: "cloud hint", CloudOnly: true}
+
+	tm.local = true
+	out := tm.run(cloudHint, hintA)
+	assert.NotContains(t, out, "cloud hint")
+	assert.Contains(t, out, "hint a")
+
+	tm.local = false
+	assert.Contains(t, tm.run(cloudHint), "cloud hint")
 }
 
 func TestSuppressedAndDisabled(t *testing.T) {

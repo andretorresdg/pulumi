@@ -478,7 +478,7 @@ func NewPreviewCmd() *cobra.Command {
 			}
 
 			configureNeoOptions(neoEnabled, cmd, &displayOpts, isDIYBackend)
-			configureNeoLink(&displayOpts)
+			displayOpts.OfferNeoLink = hints.OfferNeoDebug
 			configureNeoTaskOption(neoTaskOnFailure, cmd, &displayOpts, isDIYBackend)
 
 			if err := validatePolicyPackConfig(policyPackPaths, policyPackConfigPaths); err != nil {

@@ -33,7 +33,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pulumi/pulumi/pkg/v3/backend"
 	"github.com/pulumi/pulumi/pkg/v3/backend/diy"
 	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
@@ -45,6 +44,9 @@ import (
 
 // stateFileName is the name of the file under the Pulumi home directory that records when hints were shown.
 const stateFileName = "hints.json"
+
+// newUserPeriod is how long after hints were first flushed that hints with Hint.HideFromNewUsers stay hidden.
+const newUserPeriod = 24 * time.Hour
 
 // Hint is a product hint that the CLI can show.
 type Hint struct {
@@ -58,35 +60,29 @@ type Hint struct {
 	// CloudOnly is true for hints about Pulumi Cloud features, which are shown only to users of a Pulumi Cloud
 	// backend.
 	CloudOnly bool
-	// EstablishedStackOnly is true for hints that are shown only when the stack the hint was offered for has at
-	// least minStackResources resources besides the stack itself and providers, so that new users aren't shown them.
-	EstablishedStackOnly bool
-}
-
-// offered is a hint offered during this process, with the stack it was offered for, if any.
-type offered struct {
-	hint  Hint
-	stack backend.Stack
+	// HideFromNewUsers is true for hints that are shown only once hints were first flushed at least newUserPeriod
+	// ago, so that new users aren't distracted by product hints.
+	HideFromNewUsers bool
 }
 
 // state is the content of the hints state file.
 type state struct {
 	// LastShown records when each hint was last shown, by hint ID.
 	LastShown map[string]time.Time `json:"lastShown,omitempty"`
+	// FirstSeen is when this CLI first flushed hints, which stands in for when the user started using Pulumi.
+	FirstSeen time.Time `json:"firstSeen,omitempty"`
 }
 
 // manager holds the hints offered during this CLI process.
 type manager struct {
 	mu         sync.Mutex
-	pending    []offered
+	pending    []Hint
 	suppressed bool
 
 	now       func() time.Time
 	statePath func() (string, error)
 	settings  func() settings
 	isCloud   func() bool
-	// stackResources counts the resources of s that count towards Hint.EstablishedStackOnly.
-	stackResources func(s backend.Stack) (int, error)
 }
 
 func newManager() *manager {
@@ -95,8 +91,6 @@ func newManager() *manager {
 		statePath: func() (string, error) { return workspace.GetPulumiPath(stateFileName) },
 		settings:  loadSettings,
 		isCloud:   isCloudBackend,
-
-		stackResources: countStackResources,
 	}
 }
 
@@ -148,13 +142,7 @@ func loadSettings() settings {
 func (m *manager) offer(h Hint) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.pending = append(m.pending, offered{hint: h})
-}
-
-func (m *manager) offerFor(h Hint, s backend.Stack) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.pending = append(m.pending, offered{hint: h, stack: s})
+	m.pending = append(m.pending, h)
 }
 
 func (m *manager) suppress() {
@@ -168,7 +156,7 @@ func (m *manager) flush(w io.Writer) {
 	defer m.mu.Unlock()
 	pending, suppressed := m.pending, m.suppressed
 	m.pending, m.suppressed = nil, false
-	if len(pending) == 0 || suppressed {
+	if suppressed {
 		return
 	}
 	settings := m.settings()
@@ -182,16 +170,21 @@ func (m *manager) flush(w io.Writer) {
 		return
 	}
 	now := m.now()
+	// Record when hints were first flushed, even if none is shown, so that the new user period starts with the
+	// user's first command rather than with the first hint offered.
+	firstFlush := st.FirstSeen.IsZero()
+	if firstFlush {
+		st.FirstSeen = now
+	}
 	isCloud := sync.OnceValue(m.isCloud)
-	for _, o := range pending {
-		h := o.hint
+	for _, h := range pending {
 		if settings.skip[h.ID] {
 			continue
 		}
 		if h.CloudOnly && !isCloud() {
 			continue
 		}
-		if h.EstablishedStackOnly && !m.isEstablished(o.stack) {
+		if h.HideFromNewUsers && now.Sub(st.FirstSeen) < newUserPeriod {
 			continue
 		}
 		if last, ok := st.LastShown[h.ID]; ok && now.Sub(last) < h.Cooldown {
@@ -210,6 +203,13 @@ func (m *manager) flush(w io.Writer) {
 		}
 		show(w, h)
 		return
+	}
+
+	// Showing a hint saves the state, so a first flush that shows none still needs to save FirstSeen.
+	if firstFlush {
+		if err := save(path, st); err != nil {
+			slog.Info("could not write hints state", "err", err)
+		}
 	}
 }
 
